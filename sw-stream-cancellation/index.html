@@ -1,42 +1,112 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <title>ServiceWorker - Response.body cancellation test</title>    
-    <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
-            .then((reg) => {
-                console.log('[MAIN] Registration succeeded. SW Scope is ' + reg.scope);
-            }).catch((error) => {
-                console.log('[MAIN] Registration failed with ' + error);
-            });
-            
-            if (navigator.serviceWorker.controller)
-                doTest()
-            else
-                navigator.serviceWorker.oncontrollerchange = doTest
-        }
-        
-        
-        async function doTest() {
-            console.log(`[MAIN] ${document.title} is started`)
-            const key = '/get-file'
-            let r = await fetch(key)
-            console.log('[MAIN] Trying to cancel stream using ReadableStream.cancel()')
-            try {
-                await r.body.cancel(key)
-                console.log('[MAIN] Stream cancelled succesfully')
-            } catch (e) {
-                console.log('[MAIN] Stream cancelled with error:', e)
-            }
-        }
-    </script>
+    <meta charset="utf-8" />
+    <title>ServiceWorker - Response.body cancellation test</title>
   </head>
-  
-  <body>     
+  <body>
     <h3>Test progress is outputted to console</h3>
-    Related chromium issue: <a href="https://bugs.chromium.org/p/chromium/issues/detail?id=638494" target="_blank">638494</a> - Response.body cancellation should be notified to the service worker.<hr />
-    <a href="https://github.com/norstbox/trial/tree/master/sw-stream-cancellation" target="_blank">View source</a> on GitHub
+    Related chromium issue:
+    <a
+      href="https://bugs.chromium.org/p/chromium/issues/detail?id=638494"
+      target="_blank"
+      >638494</a
+    >
+    - Response.body cancellation should be notified to the service worker.
+    <hr />
+    <a
+      href="https://github.com/norstbox/trial/tree/master/sw-stream-cancellation"
+      target="_blank"
+      >View source</a
+    >
+    on GitHub
+    <br /><br />
+    <button id="start-download">Start download</button
+    ><button id="abort-download">Abort download</button>
+    <script>
+      let readable, resolve, promise;
+
+      const unregisterServiceWorkers = async (_) => {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          console.log(registration);
+          try {
+            await registration.unregister();
+          } catch (e) {
+            throw e;
+          }
+        }
+        return `ServiceWorker's unregistered`;
+      };
+      unregisterServiceWorkers().then(console.log, console.error);
+      const start = document.getElementById('start-download');
+
+      const abort = document.getElementById('abort-download');
+
+      abort.onclick = async (e) => {
+        readable.cancel('Download aborted');
+      };
+
+      start.onclick = async (e) => {
+        if (document.getElementById('download')) {
+          document.body.removeChild(document.getElementById('download'));
+        }
+        promise = new Promise((_) => (resolve = _));
+        const unregisterable = await unregisterServiceWorkers();
+
+        console.log(unregisterable);
+
+        const reg = await navigator.serviceWorker.register('sw.js', {
+          scope: './',
+        });
+
+        console.log(reg);
+
+        let controller;
+
+        readable = new ReadableStream({
+          start(_) {
+            return (controller = _);
+          },
+          cancel(reason) {
+            console.log(`cancel(reason): ${reason}`);
+            resolve(reason);
+          },
+        });
+        const encoder = new TextEncoder();
+        downloadable: for (let i = 0; i < 100; i++) {
+          console.log(i, readable, controller);
+          try {
+            await new Promise((r) => setTimeout(r, 100));
+            controller.enqueue(encoder.encode(i + '\n'));
+          } catch (err) {
+            console.warn(err.message);
+            break downloadable;
+          }
+        }
+        resolve('Download ready');
+
+        if ((await promise) === 'Download aborted') {
+          console.log(`${await promise}, ${await unregisterServiceWorkers()}`);
+          readable = promise = resolve = void 0;
+        } else {
+          console.log(reg);
+          controller.close();
+
+          navigator.serviceWorker.onmessage = async (event) => {
+            console.log(event);
+            if (event.data === 'ServiceWorker ready to serve download') {
+              const iframe = document.createElement('iframe');
+
+              document.body.appendChild(iframe);
+              iframe.width = iframe.height = 0;
+              iframe.id = 'download';
+              iframe.src = 'get-file';
+            }
+          };
+          navigator.serviceWorker.controller.postMessage(readable, [readable]);
+        }
+      };
+    </script>
   </body>
 </html>
